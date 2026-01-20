@@ -2,14 +2,19 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use arboard::Clipboard;
+use crossterm::cursor::MoveTo;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use rand::seq::IndexedRandom;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -19,6 +24,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 const DOUBLE_CLICK_MS: u128 = 400;
 const STATUS_DURATION_MS: u128 = 1500;
+const DEFAULT_PROMPTS: &str = "## 示例/问候\n写一封给 {name|收件人} 的简短问候邮件，主题是 {topic|主题}。\n\n## 示例/评审/检查清单\n请评审 {area|模块}，并列出 {random|\"安全\" \"性能\" \"可用性\"} 风险。\n";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let terminal = ratatui::init();
@@ -35,6 +41,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_app(mut terminal: DefaultTerminal, mut app: App) -> Result<(), Box<dyn std::error::Error>> {
     let tick_rate = Duration::from_millis(100);
     loop {
+        if app.needs_redraw {
+            terminal.clear()?;
+            app.needs_redraw = false;
+        }
         terminal.draw(|frame| ui(frame, &mut app))?;
 
         if app.should_quit {
@@ -127,6 +137,8 @@ struct App {
     last_click: Option<(usize, Instant)>,
     tree_area: Rect,
     should_quit: bool,
+    list_status: Option<StatusMessage>,
+    needs_redraw: bool,
 }
 
 impl App {
@@ -149,6 +161,8 @@ impl App {
                     last_click: None,
                     tree_area: Rect::default(),
                     should_quit: false,
+                    list_status: None,
+                    needs_redraw: false,
                 }
             }
             Err(err) => Self {
@@ -162,6 +176,8 @@ impl App {
                 last_click: None,
                 tree_area: Rect::default(),
                 should_quit: false,
+                list_status: None,
+                needs_redraw: false,
             },
         }
     }
@@ -195,6 +211,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_list(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_list(-1),
             KeyCode::Enter => self.open_selected_template(),
+            KeyCode::Char('e') => self.open_prompts_in_editor(),
             _ => {}
         }
     }
@@ -288,6 +305,52 @@ impl App {
         match Clipboard::new().and_then(|mut cb| cb.set_text(rendered)) {
             Ok(_) => editor.set_status("已复制"),
             Err(err) => editor.set_status(&format!("复制失败: {err}")),
+        }
+    }
+
+    fn set_list_status(&mut self, text: &str) {
+        self.list_status = Some(StatusMessage {
+            text: text.to_string(),
+            since: Instant::now(),
+        });
+    }
+
+    fn open_prompts_in_editor(&mut self) {
+        let editor = match env::var("EDITOR") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => {
+                self.set_list_status("未设置 EDITOR 环境变量");
+                return;
+            }
+        };
+
+        let path = match ensure_prompts_file() {
+            Ok(path) => path,
+            Err(err) => {
+                self.set_list_status(&err);
+                return;
+            }
+        };
+
+        if let Err(err) = run_editor_command(&editor, &path) {
+            self.set_list_status(&err);
+            return;
+        }
+
+        self.needs_redraw = true;
+
+        match load_templates() {
+            Ok(templates) => {
+                self.tree_items = build_tree_items(&templates);
+                self.templates = templates;
+                let mut list_state = ListState::default();
+                if !self.tree_items.is_empty() {
+                    list_state.select(Some(0));
+                }
+                self.list_state = list_state;
+                self.list_scroll = 0;
+            }
+            Err(err) => self.set_list_status(&err),
         }
     }
 
@@ -454,8 +517,16 @@ fn render_list(frame: &mut Frame, app: &mut App) {
     }
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    let help = Paragraph::new("↑↓/j k 选择  Enter/双击 打开  q 退出")
-        .style(Style::new().fg(Color::DarkGray));
+    let mut help = "↑↓/j k 选择  Enter/双击 打开  e 编辑  q 退出".to_string();
+    if let Some(message) = app
+        .list_status
+        .as_ref()
+        .filter(|msg| msg.since.elapsed().as_millis() <= STATUS_DURATION_MS)
+    {
+        help.push_str("  |  ");
+        help.push_str(&message.text);
+    }
+    let help = Paragraph::new(help).style(Style::new().fg(Color::DarkGray));
     frame.render_widget(help, help_area);
 }
 
@@ -580,7 +651,7 @@ fn ensure_visible(current_scroll: usize, selected: usize, total: usize, view_hei
 }
 
 fn load_templates() -> Result<Vec<Template>, String> {
-    let path = prompts_path().ok_or_else(|| "无法定位用户目录".to_string())?;
+    let path = ensure_prompts_file()?;
     let content = fs::read_to_string(&path)
         .map_err(|err| format!("读取失败: {} ({err})", path.display()))?;
     let templates = parse_templates(&content);
@@ -588,6 +659,63 @@ fn load_templates() -> Result<Vec<Template>, String> {
         return Err("未找到任何模板，请检查是否有 `## 标题` 段落。".to_string());
     }
     Ok(templates)
+}
+
+fn ensure_prompts_file() -> Result<PathBuf, String> {
+    let path = prompts_path().ok_or_else(|| "无法定位用户目录".to_string())?;
+    if path.exists() {
+        return Ok(path);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("创建目录失败: {} ({err})", parent.display()))?;
+    }
+    fs::write(&path, DEFAULT_PROMPTS)
+        .map_err(|err| format!("创建模板文件失败: {} ({err})", path.display()))?;
+    Ok(path)
+}
+
+fn run_editor_command(editor: &str, path: &PathBuf) -> Result<(), String> {
+    let mut parts = editor.split_whitespace();
+    let command = parts
+        .next()
+        .ok_or_else(|| "EDITOR 为空".to_string())
+        .map(|value| value.to_string())?;
+    let args: Vec<String> = parts.map(|part| part.to_string()).collect();
+
+    disable_raw_mode().map_err(|err| format!("退出原始模式失败: {err}"))?;
+    execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+        .map_err(|err| format!("退出全屏模式失败: {err}"))?;
+
+    let status_result = Command::new(&command)
+        .args(&args)
+        .arg(path)
+        .status();
+
+    let restore_result = execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    )
+        .map_err(|err| format!("恢复全屏模式失败: {err}"))
+        .and_then(|_| enable_raw_mode().map_err(|err| format!("恢复原始模式失败: {err}")));
+
+    let status = match status_result {
+        Ok(status) => status,
+        Err(err) => {
+            let _ = restore_result;
+            return Err(format!("启动编辑器失败: {err}"));
+        }
+    };
+    if let Err(err) = restore_result {
+        return Err(err);
+    }
+    if !status.success() {
+        return Err(format!("编辑器退出异常: {status}"));
+    }
+    Ok(())
 }
 
 fn prompts_path() -> Option<PathBuf> {
