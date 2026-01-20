@@ -9,3 +9,7 @@ arboard = "3.6.1"
 crossterm = "0.29.0"
 rand = "0.9.2"
 ratatui = "0.30.0"
+
+[[bin]]
+name = "pmt"
+path = "src/main.rs"
