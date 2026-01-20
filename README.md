@@ -18,15 +18,13 @@ the rendered result to the clipboard.
 Rust toolchain is required.
 
 ```bash
-cargo build --release
+cargo install --path .
 ```
-
-Binary will be at `target/release/pmt` (or `pmt.exe` on Windows).
 
 ## Run
 
 ```bash
-cargo run
+pmt
 ```
 
 ## Prompt file format
@@ -61,6 +59,7 @@ List view:
 
 - Up/Down or j/k: move
 - Enter / double click: open template
+- e: edit template
 - q: quit
 
 Editor view:
