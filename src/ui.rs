@@ -4,9 +4,18 @@ use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, EditorState, View};
+use crate::models::TreeItem;
 use crate::parser::render_template;
 
 const STATUS_DURATION_MS: u128 = 1500;
+const ICON_FOLDER: &str = "";
+const ICON_TEMPLATE: &str = "󰈙";
+const SELECTED_MARKER: &str = " ";
+const UNSELECTED_MARKER: &str = "  ";
+const TREE_BRANCH: &str = "├─ ";
+const TREE_LAST: &str = "└─ ";
+const TREE_PIPE: &str = "│  ";
+const TREE_EMPTY: &str = "   ";
 
 pub(crate) fn render_app(frame: &mut Frame, app: &mut App) {
     match app.view {
@@ -55,25 +64,28 @@ fn render_list(frame: &mut Frame, app: &mut App) {
 
     let start = app.list_scroll;
     let end = (start + view_height).min(app.tree_items.len());
-    let visible = &app.tree_items[start..end];
+    let tree_lines = build_tree_lines(&app.tree_items);
+    let visible = &tree_lines[start..end];
+    let selected = app.list_state.selected().unwrap_or(0);
 
     let items: Vec<ListItem> = visible
         .iter()
-        .map(|item| {
-            let indent = "  ".repeat(item.depth);
-            let name = if item.template_index.is_some() {
-                item.label.clone()
+        .enumerate()
+        .map(|(idx, line)| {
+            let is_selected = start + idx == selected;
+            let marker = if is_selected {
+                SELECTED_MARKER
             } else {
-                format!("{}/", item.label)
+                UNSELECTED_MARKER
             };
-            ListItem::new(format!("{indent}{name}"))
+            ListItem::new(format!("{marker}{line}"))
         })
         .collect();
 
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::new().bg(Color::Blue).fg(Color::White))
-        .highlight_symbol("> ");
+        .highlight_symbol("");
 
     let mut state = ListState::default();
     if let Some(selected) = app.list_state.selected() {
@@ -220,4 +232,58 @@ fn ensure_visible(current_scroll: usize, selected: usize, total: usize, view_hei
         scroll = selected + 1 - view_height;
     }
     scroll
+}
+
+fn build_tree_lines(items: &[TreeItem]) -> Vec<String> {
+    let mut lines = Vec::with_capacity(items.len());
+    let mut branches: Vec<bool> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        branches.truncate(item.depth);
+        let is_last = is_last_sibling(items, index);
+        let has_children = has_children(items, index);
+        let icon = if has_children || item.template_index.is_none() {
+            ICON_FOLDER
+        } else {
+            ICON_TEMPLATE
+        };
+
+        let mut line = String::new();
+        for has_next in &branches {
+            if *has_next {
+                line.push_str(TREE_PIPE);
+            } else {
+                line.push_str(TREE_EMPTY);
+            }
+        }
+
+        if is_last {
+            line.push_str(TREE_LAST);
+        } else {
+            line.push_str(TREE_BRANCH);
+        }
+        line.push_str(icon);
+        line.push(' ');
+        line.push_str(&item.label);
+        lines.push(line);
+
+        branches.push(!is_last);
+    }
+    lines
+}
+
+fn is_last_sibling(items: &[TreeItem], index: usize) -> bool {
+    let depth = items[index].depth;
+    for item in &items[index + 1..] {
+        if item.depth <= depth {
+            return item.depth < depth;
+        }
+    }
+    true
+}
+
+fn has_children(items: &[TreeItem], index: usize) -> bool {
+    match items.get(index + 1) {
+        Some(next) => next.depth > items[index].depth,
+        None => false,
+    }
 }
