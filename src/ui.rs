@@ -1,7 +1,7 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::{App, EditorState, View};
 use crate::models::TreeItem;
@@ -221,7 +221,12 @@ fn inner_rect(area: Rect) -> Rect {
     inner
 }
 
-fn ensure_visible(current_scroll: usize, selected: usize, total: usize, view_height: usize) -> usize {
+fn ensure_visible(
+    current_scroll: usize,
+    selected: usize,
+    total: usize,
+    view_height: usize,
+) -> usize {
     if total == 0 || view_height == 0 {
         return 0;
     }

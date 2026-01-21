@@ -9,7 +9,7 @@ use crossterm::cursor::MoveTo;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
 use crate::models::Template;
@@ -19,8 +19,8 @@ const DEFAULT_PROMPTS: &str = "## 示例/问候\n写一封给 {name|收件人} �
 
 pub(crate) fn load_templates() -> Result<Vec<Template>, String> {
     let path = ensure_prompts_file()?;
-    let content = fs::read_to_string(&path)
-        .map_err(|err| format!("读取失败: {} ({err})", path.display()))?;
+    let content =
+        fs::read_to_string(&path).map_err(|err| format!("读取失败: {} ({err})", path.display()))?;
     let templates = parse_templates(&content);
     if templates.is_empty() {
         return Err("未找到任何模板，请检查是否有 `## 标题` 段落。".to_string());

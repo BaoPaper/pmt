@@ -207,7 +207,10 @@ pub(crate) fn collect_fields(tokens: &[Token]) -> Vec<Field> {
     let mut fields: Vec<Field> = Vec::new();
     for token in tokens {
         if let Token::Var { name, desc, .. } = token {
-            if fields.iter().any(|field| field.name.as_str() == name.as_str()) {
+            if fields
+                .iter()
+                .any(|field| field.name.as_str() == name.as_str())
+            {
                 continue;
             }
             let label = match desc {

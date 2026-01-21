@@ -1,9 +1,7 @@
 use std::env;
 use std::time::Instant;
 
-use crossterm::event::{
-    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use rand::seq::IndexedRandom;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -234,7 +232,11 @@ impl App {
             Some(index) => index,
             None => return,
         };
-        let template_index = match self.tree_items.get(index).and_then(|item| item.template_index) {
+        let template_index = match self
+            .tree_items
+            .get(index)
+            .and_then(|item| item.template_index)
+        {
             Some(template_index) => template_index,
             None => return,
         };
