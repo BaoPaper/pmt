@@ -34,6 +34,8 @@ pub(crate) struct EditorState {
     pub(crate) fields: Vec<Field>,
     pub(crate) active_field: usize,
     pub(crate) field_scroll: usize,
+    pub(crate) fields_area: Rect,
+    pub(crate) field_height: u16,
     pub(crate) status: Option<StatusMessage>,
 }
 
@@ -105,7 +107,7 @@ impl App {
     pub(crate) fn on_mouse(&mut self, mouse: MouseEvent) {
         match self.view {
             View::List => self.on_mouse_list(mouse),
-            View::Editor => {}
+            View::Editor => self.on_mouse_editor(mouse),
             View::Error => {}
         }
     }
@@ -141,6 +143,43 @@ impl App {
                 }
             }
             self.last_click = Some((index, now));
+        }
+    }
+
+    fn on_mouse_editor(&mut self, mouse: MouseEvent) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        let editor = match self.editor.as_mut() {
+            Some(editor) => editor,
+            None => return,
+        };
+        if editor.fields.is_empty() {
+            return;
+        }
+        let area = editor.fields_area;
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        if mouse.column < area.x
+            || mouse.column >= area.x + area.width
+            || mouse.row < area.y
+            || mouse.row >= area.y + area.height
+        {
+            return;
+        }
+        let field_height = editor.field_height;
+        if field_height == 0 {
+            return;
+        }
+        let view_capacity = (area.height / field_height) as usize;
+        let row_offset = (mouse.row - area.y) / field_height;
+        if row_offset as usize >= view_capacity {
+            return;
+        }
+        let index = editor.field_scroll + row_offset as usize;
+        if index < editor.fields.len() {
+            editor.active_field = index;
         }
     }
 
@@ -297,6 +336,8 @@ impl EditorState {
             fields,
             active_field: 0,
             field_scroll: 0,
+            fields_area: Rect::default(),
+            field_height: 0,
             status: None,
         }
     }

@@ -211,7 +211,7 @@ pub(crate) fn collect_fields(tokens: &[Token]) -> Vec<Field> {
                 continue;
             }
             let label = match desc {
-                Some(desc) if !desc.is_empty() => format!("{name} ({desc})"),
+                Some(desc) if !desc.is_empty() => desc.clone(),
                 _ => name.clone(),
             };
             fields.push(Field {

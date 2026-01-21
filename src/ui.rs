@@ -1,6 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -147,41 +146,47 @@ fn render_editor(frame: &mut Frame, app: &mut App) {
 fn render_fields(frame: &mut Frame, editor: &mut EditorState, area: Rect) {
     let block = Block::bordered().title("参数");
     let inner = inner_rect(area);
+    frame.render_widget(block, area);
 
-    let view_height = inner.height as usize;
+    let field_height: u16 = 3;
+    editor.fields_area = inner;
+    editor.field_height = field_height;
+    let view_capacity = (inner.height / field_height) as usize;
     editor.field_scroll = ensure_visible(
         editor.field_scroll,
         editor.active_field,
         editor.fields.len(),
-        view_height,
+        view_capacity,
     );
 
     let start = editor.field_scroll;
-    let end = (start + view_height).min(editor.fields.len());
-    let visible = &editor.fields[start..end];
+    let end = (start + view_capacity).min(editor.fields.len());
 
-    let items: Vec<ListItem> = visible
-        .iter()
-        .enumerate()
-        .map(|(idx, field)| {
-            let is_active = start + idx == editor.active_field;
-            let mut line = format!("{}: {}", field.label, field.value);
-            if is_active {
-                line.push_str(" |");
-            }
-            ListItem::new(Line::from(Span::raw(line)))
-        })
-        .collect();
-
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::new().bg(Color::Blue).fg(Color::White));
-
-    let mut state = ListState::default();
-    if editor.active_field >= start && editor.active_field < end {
-        state.select(Some(editor.active_field - start));
+    for (idx, field) in editor.fields[start..end].iter().enumerate() {
+        let is_active = start + idx == editor.active_field;
+        let border_style = if is_active {
+            Style::new().fg(Color::Blue)
+        } else {
+            Style::new().fg(Color::DarkGray)
+        };
+        let mut value = field.value.clone();
+        if is_active {
+            value.push('|');
+        }
+        let field_area = Rect {
+            x: inner.x,
+            y: inner.y + (idx as u16) * field_height,
+            width: inner.width,
+            height: field_height,
+        };
+        let field_block = Block::bordered()
+            .title(field.label.as_str())
+            .border_style(border_style);
+        let paragraph = Paragraph::new(value)
+            .block(field_block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, field_area);
     }
-    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_preview(frame: &mut Frame, title: &str, rendered: &str, area: Rect) {
