@@ -6,7 +6,7 @@ use rand::seq::IndexedRandom;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
-use crate::models::{Field, Template, Token, TreeItem};
+use crate::models::{Field, FieldKind, Template, Token, TreeItem};
 use crate::parser::{build_tree_items, collect_fields, parse_tokens, render_template};
 use crate::system::{ensure_prompts_file, load_templates, run_editor_command, set_clipboard};
 
@@ -198,6 +198,12 @@ impl App {
             KeyCode::Up => {
                 editor.prev_field();
             }
+            KeyCode::Left => {
+                editor.cycle_random(-1);
+            }
+            KeyCode::Right => {
+                editor.cycle_random(1);
+            }
             KeyCode::Backspace => {
                 editor.backspace();
             }
@@ -211,7 +217,11 @@ impl App {
                 editor.reroll_random();
             }
             KeyCode::Char(ch) => {
-                editor.push_char(ch);
+                if ch == ' ' && editor.active_field_is_random() {
+                    editor.toggle_pin();
+                } else {
+                    editor.push_char(ch);
+                }
             }
             _ => {}
         }
@@ -364,29 +374,107 @@ impl EditorState {
 
     fn push_char(&mut self, ch: char) {
         if let Some(field) = self.fields.get_mut(self.active_field) {
-            field.value.push(ch);
+            if matches!(&field.kind, FieldKind::Var) {
+                field.value.push(ch);
+            }
         }
     }
 
     fn backspace(&mut self) {
         if let Some(field) = self.fields.get_mut(self.active_field) {
-            field.value.pop();
+            if matches!(&field.kind, FieldKind::Var) {
+                field.value.pop();
+            }
         }
     }
 
     fn reroll_random(&mut self) {
         let mut rng = rand::rng();
-        for token in &mut self.tokens {
+        let pinned_indices: Vec<usize> = self
+            .fields
+            .iter()
+            .filter_map(|f| match &f.kind {
+                FieldKind::Random {
+                    token_index,
+                    pinned: true,
+                } => Some(*token_index),
+                _ => None,
+            })
+            .collect();
+
+        for (idx, token) in self.tokens.iter_mut().enumerate() {
             if let Token::Random {
                 options, choice, ..
             } = token
             {
+                if pinned_indices.contains(&idx) {
+                    continue;
+                }
                 if let Some(pick) = options.choose(&mut rng) {
                     *choice = pick.clone();
                 }
             }
         }
+
+        for field in &mut self.fields {
+            if let FieldKind::Random { token_index, .. } = &field.kind {
+                if let Token::Random { choice, .. } = &self.tokens[*token_index] {
+                    field.value = choice.clone();
+                }
+            }
+        }
+
         self.set_status("已重随");
+    }
+
+    fn cycle_random(&mut self, delta: isize) {
+        let field = match self.fields.get(self.active_field) {
+            Some(f) => f,
+            None => return,
+        };
+        let token_index = match &field.kind {
+            FieldKind::Random { token_index, .. } => *token_index,
+            _ => return,
+        };
+        let token = match self.tokens.get_mut(token_index) {
+            Some(t) => t,
+            None => return,
+        };
+        if let Token::Random {
+            options, choice, ..
+        } = token
+        {
+            if options.is_empty() {
+                return;
+            }
+            let current_idx = options.iter().position(|o| o == choice).unwrap_or(0);
+            let new_idx =
+                (current_idx as isize + delta).rem_euclid(options.len() as isize) as usize;
+            *choice = options[new_idx].clone();
+        }
+        if let Token::Random { choice, .. } = &self.tokens[token_index] {
+            self.fields[self.active_field].value = choice.clone();
+        }
+    }
+
+    fn toggle_pin(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.active_field) {
+            if let FieldKind::Random { pinned, .. } = &mut field.kind {
+                *pinned = !*pinned;
+                if *pinned {
+                    self.set_status("已固定");
+                } else {
+                    self.set_status("已取消固定");
+                }
+            }
+        }
+    }
+
+    pub(crate) fn active_field_is_random(&self) -> bool {
+        self.fields
+            .get(self.active_field)
+            .map(|f| matches!(&f.kind, FieldKind::Random { .. }))
+            .unwrap_or(false)
     }
 
     fn set_status(&mut self, text: &str) {

@@ -147,7 +147,8 @@ pub(crate) fn parse_tokens(body: &str) -> Vec<Token> {
 fn parse_placeholder(inner: &str, raw: &str) -> Option<Token> {
     let trimmed = inner.trim();
     if let Some(rest) = trimmed.strip_prefix("random|") {
-        let options = parse_random_options(rest);
+        let (options_str, desc) = split_random_desc(rest);
+        let options = parse_random_options(options_str);
         if options.is_empty() {
             return Some(Token::Text(raw.to_string()));
         }
@@ -156,6 +157,7 @@ fn parse_placeholder(inner: &str, raw: &str) -> Option<Token> {
         return Some(Token::Random {
             options,
             choice,
+            desc: desc.map(|s| s.to_string()),
             raw: raw.to_string(),
         });
     }
@@ -171,6 +173,22 @@ fn parse_placeholder(inner: &str, raw: &str) -> Option<Token> {
         desc,
         raw: raw.to_string(),
     })
+}
+
+fn split_random_desc(input: &str) -> (&str, Option<&str>) {
+    let mut in_quote = false;
+    for (i, ch) in input.char_indices() {
+        if ch == '"' {
+            in_quote = !in_quote;
+        } else if ch == '|' && !in_quote {
+            let desc = input[i + 1..].trim();
+            if desc.is_empty() {
+                return (input, None);
+            }
+            return (&input[..i], Some(desc));
+        }
+    }
+    (input, None)
 }
 
 fn parse_random_options(input: &str) -> Vec<String> {
@@ -204,24 +222,46 @@ fn parse_random_options(input: &str) -> Vec<String> {
 }
 
 pub(crate) fn collect_fields(tokens: &[Token]) -> Vec<Field> {
+    use crate::models::FieldKind;
     let mut fields: Vec<Field> = Vec::new();
-    for token in tokens {
-        if let Token::Var { name, desc, .. } = token {
-            if fields
-                .iter()
-                .any(|field| field.name.as_str() == name.as_str())
-            {
-                continue;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Var { name, desc, .. } => {
+                if fields.iter().any(|field| field.name == *name) {
+                    continue;
+                }
+                let label = match desc {
+                    Some(desc) if !desc.is_empty() => desc.clone(),
+                    _ => name.clone(),
+                };
+                fields.push(Field {
+                    name: name.clone(),
+                    label,
+                    value: String::new(),
+                    kind: FieldKind::Var,
+                });
             }
-            let label = match desc {
-                Some(desc) if !desc.is_empty() => desc.clone(),
-                _ => name.clone(),
-            };
-            fields.push(Field {
-                name: name.clone(),
-                label,
-                value: String::new(),
-            });
+            Token::Random {
+                options,
+                choice,
+                desc,
+                ..
+            } => {
+                let label = match desc {
+                    Some(d) if !d.is_empty() => d.clone(),
+                    _ => options.join(" | "),
+                };
+                fields.push(Field {
+                    name: format!("__random_{index}"),
+                    label,
+                    value: choice.clone(),
+                    kind: FieldKind::Random {
+                        token_index: index,
+                        pinned: false,
+                    },
+                });
+            }
+            _ => {}
         }
     }
     fields

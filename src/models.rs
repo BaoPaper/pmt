@@ -12,10 +12,17 @@ pub(crate) struct TreeItem {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum FieldKind {
+    Var,
+    Random { token_index: usize, pinned: bool },
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) label: String,
     pub(crate) value: String,
+    pub(crate) kind: FieldKind,
 }
 
 #[derive(Clone, Debug)]
@@ -29,6 +36,7 @@ pub(crate) enum Token {
     Random {
         options: Vec<String>,
         choice: String,
+        desc: Option<String>,
         raw: String,
     },
 }

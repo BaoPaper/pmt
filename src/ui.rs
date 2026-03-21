@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::app::{App, EditorState, View};
-use crate::models::TreeItem;
+use crate::models::{FieldKind, Token, TreeItem};
 use crate::parser::render_template;
 
 const STATUS_DURATION_MS: u128 = 1500;
@@ -142,7 +142,11 @@ fn render_editor(frame: &mut Frame, app: &mut App) {
     let rendered = render_template(&editor.tokens, &editor.fields);
     render_preview(frame, &title, &rendered, preview_area);
 
-    let mut status = "Esc 返回  Tab/↑↓ 切换  Ctrl+C 复制  F5 重随".to_string();
+    let mut status = String::from("Esc 返回  Tab/↑↓ 切换");
+    if editor.active_field_is_random() {
+        status.push_str("  ◀▶ 选项  Space 固定");
+    }
+    status.push_str("  Ctrl+C 复制  F5 重随");
     if let Some(message) = editor
         .status
         .as_ref()
@@ -176,15 +180,53 @@ fn render_fields(frame: &mut Frame, editor: &mut EditorState, area: Rect) {
 
     for (idx, field) in editor.fields[start..end].iter().enumerate() {
         let is_active = start + idx == editor.active_field;
-        let border_style = if is_active {
-            Style::new().fg(Color::Blue)
-        } else {
-            Style::new().fg(Color::DarkGray)
+
+        let (title, display_value, border_style) = match &field.kind {
+            FieldKind::Var => {
+                let border = if is_active {
+                    Style::new().fg(Color::Blue)
+                } else {
+                    Style::new().fg(Color::DarkGray)
+                };
+                let mut v = field.value.clone();
+                if is_active {
+                    v.push('|');
+                }
+                (field.label.clone(), v, border)
+            }
+            FieldKind::Random {
+                token_index,
+                pinned,
+            } => {
+                let border = if is_active {
+                    Style::new().fg(Color::Blue)
+                } else if *pinned {
+                    Style::new().fg(Color::Yellow)
+                } else {
+                    Style::new().fg(Color::DarkGray)
+                };
+                let title = if *pinned {
+                    format!("[固定] {}", field.label)
+                } else {
+                    field.label.clone()
+                };
+                let display = if let Token::Random {
+                    options, choice, ..
+                } = &editor.tokens[*token_index]
+                {
+                    let pos = options.iter().position(|o| o == choice).unwrap_or(0);
+                    if is_active {
+                        format!("◀ {} ({}/{}) ▶", choice, pos + 1, options.len())
+                    } else {
+                        format!("{} ({}/{})", choice, pos + 1, options.len())
+                    }
+                } else {
+                    field.value.clone()
+                };
+                (title, display, border)
+            }
         };
-        let mut value = field.value.clone();
-        if is_active {
-            value.push('|');
-        }
+
         let field_area = Rect {
             x: inner.x,
             y: inner.y + (idx as u16) * field_height,
@@ -192,9 +234,9 @@ fn render_fields(frame: &mut Frame, editor: &mut EditorState, area: Rect) {
             height: field_height,
         };
         let field_block = Block::bordered()
-            .title(field.label.as_str())
+            .title(title.as_str())
             .border_style(border_style);
-        let paragraph = Paragraph::new(value)
+        let paragraph = Paragraph::new(display_value)
             .block(field_block)
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, field_area);
